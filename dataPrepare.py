@@ -11,6 +11,11 @@ import scipy.signal
 import torch
 from torch.utils.data import Dataset, DataLoader
 
+import matplotlib.pyplot as plt
+plt.switch_backend('TkAgg')
+import matplotlib.ticker as ticker
+import numpy as np
+
 class TrajectoryDataset(Dataset):
     """Face Landmarks dataset."""
     
@@ -36,6 +41,7 @@ class TrajectoryDataset(Dataset):
     def __getitem__(self, idx):
         single_data = self.X_frames[idx]
         single_label = self.Y_frames[idx]
+        #single_label = torch.zeros(single_label.shape).double()
         return (single_data, single_label)
     
     def load_data(self):
@@ -52,36 +58,71 @@ class TrajectoryDataset(Dataset):
                                'RL_rX', 'RL_rY', 'RL_rAcc', 'RL_angle',
                                'RF_rX', 'RF_rY', 'RF_rAcc', 'RF_angle']]
             frame = np.asarray(frame)
-            frame[np.where(frame>100)] = 0 # assign all 5000 to 0
+            frame[np.where(frame>4000)] = 0 # assign all 5000 to 0
             # remove anomalies, which has a discontinuious local x or local y
             dis = frame[1:,:2] - frame[:-1,:2]
             dis = np.sqrt(np.power(dis[:,0],2)+np.power(dis[:,1],2))
             idx = np.where(dis>10)
             if not (idx[0].all):
                 continue
-            # smooth the data column wise
-            for i in range(frame.shape[1]):
-                #window size = 5, polynomial order = 3
-                frame[:,i] =  scipy.signal.savgol_filter(frame[:,i], 5, 3)
+            #smooth the data column wise
+            #window size = 5, polynomial order = 3
+            frame =  scipy.signal.savgol_filter(frame, window_length=5, polyorder=3,axis=0)
+            #print(frame[:,0])
             # calculate vel_x and vel_y according to local_x and local_y for all vehi
             All_vels = []
             for i in range(7):
-                x_vel = (frame[0+(i-1)*4,1:] -  frame[0+(i-1)*4,:-1])/0.1;
+                '''
+                plt.figure(1)
+                plt.subplot(2,3,1)
+                print(0+i*4)
+                plt.plot(frame[1:,(0+i*4)],'ro')
+                plt.subplot(2,3,2)
+                plt.plot(frame[1:,1+i*4],'ro')
+                '''
+                x_vel = (frame[1:,0+i*4] -  frame[:-1, 0+i*4])/0.1;
                 v_avg = (x_vel[1:] +x_vel[:-1])/2.0;
                 v1 = [2.0*x_vel[0]- v_avg[0]];v_end = [2.0*x_vel[-1]- v_avg[-1]];
                 vel = (v1+ v_avg.tolist()+v_end)
                 vel = np.array(vel)
-                y_vel = (frame[1+(i-1)*4,1:] -  frame[1+(i-1)*4,:-1])/0.1;
+                
+                y_vel = (frame[1:,1+i*4] -  frame[:-1, 1+i*4])/0.1;
                 vy_avg = (y_vel[1:] +y_vel[:-1])/2.0;
                 vy1 = [2.0*y_vel[0]- vy_avg[0]];vy_end = [2.0*y_vel[-1]- vy_avg[-1]];
                 vely = (vy1+ vy_avg.tolist()+ vy_end)
                 vely = np.array(vely)
-                All_vels.append(vel+vely)
-            total_frame_data = All_vels[:1]+frame.tolist()+All_vels[2:]
-            total_frame_data = np.array(total_frame_data,dtype=np.double);
+                '''
+                plt.subplot(2,3,4)
+                plt.plot(vel,'ro')
+                plt.subplot(2,3,5)
+                plt.plot(vely,'ro')
+                plt.subplot(2,3,6)
+                print(frame[1:50,0+i*4])
+                plt.plot(frame[1:,0+i*4],frame[1:,1+i*4],'go')
+                plt.show()
+                '''
+                if isinstance(All_vels,(list)):
+                    All_vels = np.vstack((vel,vely))
+                else:
+                    All_vels = np.vstack((All_vels,vel.reshape(1,-1)))
+                    All_vels = np.vstack((All_vels,vely.reshape(1,-1)))
+            All_vels = np.transpose(All_vels)
+            total_frame_data = np.concatenate(( All_vels[:,:2], frame, All_vels[:,2:]),axis=1)
+
             # split into several frames each frame have a total length of 100, drop sequence smaller than 130
             if(total_frame_data.shape[0]<130):
                 continue
+            '''
+            plt.figure(2)
+            plt.subplot(1,3,1)
+            plt.plot(total_frame_data[:-29,0],'ro')
+            plt.subplot(1,3,2)
+            plt.plot(total_frame_data[:-29,1],'ro')
+            plt.subplot(1,3,3)
+            plt.plot(total_frame_data[:-29,2],total_frame_data[:-29,3],'ro')
+            plt.show()
+            plt.pause(100)
+            '''
             X = total_frame_data[:-29,:]
             Y = total_frame_data[29:,:4]
             count = 0
@@ -91,6 +132,7 @@ class TrajectoryDataset(Dataset):
                 j = i-1;
                 if count>20:
                     break
+                #print('X[] shape',X[i:i+100,:].shape)
                 self.X_frames = self.X_frames + [X[i:i+100,:]]
                 self.Y_frames = self.Y_frames + [Y[i:i+100,:]]
                 count = count+1
@@ -123,8 +165,8 @@ def get_dataloader():
     num_test = (int)(dataset.__len__()*0.9) - num_train
     num_validation = (int)(dataset.__len__()-num_test-num_train)
     train, test, validation = torch.utils.data.random_split(dataset, [num_train, num_test, num_validation])
-    train_loader = DataLoader(train, batch_size=32, shuffle=True)
-    test_loader = DataLoader(test, batch_size=32, shuffle=True)
-    validation_loader = DataLoader(validation, batch_size=32, shuffle=True)
+    train_loader = DataLoader(train, batch_size=64, shuffle=True)
+    test_loader = DataLoader(test, batch_size=64, shuffle=True)
+    validation_loader = DataLoader(validation, batch_size=64, shuffle=True)
     return (train_loader, test_loader, validation_loader)
 
