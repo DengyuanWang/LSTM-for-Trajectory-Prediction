@@ -14,39 +14,39 @@ import torch
 import torch.nn as nn
 from torch import optim
 import torch.nn.functional as F
+from torch.autograd import Variable
 
 from dataPrepare import *
 
-SOS_token = [0.0,0.0,0.0,0.0]
-EOS_token = [1.0,1.0,1.0,1.0]
+torch.manual_seed(0)
+
 MAX_LENGTH = 100
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if torch.cuda.is_available():
     print('ok')
-Training_generator, Test, Valid = get_dataloader()
+Training_generator, Test, Valid, WholeSet= get_dataloader()
 
 
 class NNPred(nn.Module):
-    def __init__(self, input_size, output_size,batch_size, dropout=0.2):
+    def __init__(self, input_size, output_size,hidden_size,batch_size, dropout=0.2):
         super(NNPred, self).__init__()
         
         self.batch_size = batch_size
-        self.hidden_size = 256
-        self.bilstmhidden_size = 128
+        self.hidden_size = hidden_size
+        self.bilstmhidden_size = int(hidden_size/2)
         self.num_layers = 1
-        self.reset()
         
         self.fc2fc = nn.Linear(input_size, hidden_size)
         self.fc2lstm = nn.Linear(input_size, hidden_size)
         self.fc2bilstm = nn.Linear(input_size, hidden_size)
         
         self.fc = nn.Linear(hidden_size, hidden_size)
-        self.lstm = nn.LSTM(hidden_size, hidden_size,num_layers=self.num_layers,bidirectional=False)
+        self.lstm = nn.LSTM(hidden_size, hidden_size,num_layers=self.num_layers,bidirectional=False,batch_first=True)
         self.bilstm = nn.LSTM(hidden_size, self.bilstmhidden_size,
-                              num_layers=self.num_layers,bidirectional=True)
-        self.lstm2 = nn.LSTM(hidden_size, hidden_size,num_layers=self.num_layers,bidirectional=False)
+                              num_layers=self.num_layers,bidirectional=True,batch_first=True)
+        self.lstm2 = nn.LSTM(hidden_size, hidden_size,num_layers=self.num_layers,bidirectional=False,batch_first=True)
         self.bilstm2 = nn.LSTM(hidden_size, self.bilstmhidden_size,
-                              num_layers=self.num_layers,bidirectional=True)
+                              num_layers=self.num_layers,bidirectional=True,batch_first=True)
 
         self.dropout_fc = nn.Dropout(p=dropout)
         self.dropout_LSTM = nn.Dropout(p=dropout)
@@ -59,20 +59,32 @@ class NNPred(nn.Module):
         self.tanh = nn.Tanh()
     
     def forward(self, input):
-        #input = tensor shape[len,batchsize,features]
-        '''
+        #input = tensor shape[batchsize, len, num_features]
+
+
+        # init
+        self.h0 = Variable(torch.randn(self.num_layers, self.batch_size, self.hidden_size, dtype=torch.double, device=device))
+        self.c0 = Variable(torch.randn(self.num_layers, self.batch_size, self.hidden_size, dtype=torch.double, device=device))
+        self.h1 = Variable(torch.randn(self.num_layers*2, self.batch_size, self.bilstmhidden_size, dtype=torch.double, device=device))
+        self.c1 = Variable(torch.randn(self.num_layers*2, self.batch_size, self.bilstmhidden_size, dtype=torch.double, device=device))
+        self.h2 = Variable(torch.randn(self.num_layers, self.batch_size, self.hidden_size, dtype=torch.double, device=device))
+        self.c2 = Variable(torch.randn(self.num_layers, self.batch_size, self.hidden_size, dtype=torch.double, device=device))
+        self.h3 = Variable(torch.randn(self.num_layers*2, self.batch_size, self.bilstmhidden_size, dtype=torch.double, device=device))
+        self.c3 = Variable(torch.randn(self.num_layers*2, self.batch_size, self.bilstmhidden_size, dtype=torch.double, device=device))
+
         in2fc = self.fc2fc(input)
         in2lstm = self.fc2lstm(input)
         in2bilstm = self.fc2bilstm(input)
-        fc_out = self.dropout_fc(self.relu(self.fc(in2fc)))
-        lstm_out,self.hiddenlstm = self.lstm(in2lstm.double(),self.hiddenlstm)
-        bilstm_out,self.hiddenbilstm = self.bilstm(in2bilstm,self.hiddenbilstm)
-        lstm_out2,self.hiddenlstm = self.lstm2(lstm_out,self.hiddenlstm2)
-        bilstm_out2,self.hiddenbilstm = self.bilstm2(bilstm_out,self.hiddenbilstm2)
         
+        fc_out = self.dropout_fc(self.relu(self.fc(in2fc)))
+        lstm_out,(self.h0,self.c0)= self.lstm(in2lstm.double(),( self.h0.detach(), self.c0.detach() ) )
+        bilstm_out,(self.h1,self.c1) = self.bilstm(in2bilstm, ( self.h1.detach(), self.c1.detach() ) )
+        lstm_out2,(self.h2,self.c2) = self.lstm2(lstm_out, ( self.h2.detach(), self.c2.detach() ) )
+        bilstm_out2,(self.h3,self.c3) = self.bilstm2(bilstm_out, ( self.h3.detach(), self.c3.detach() ) )
+
         lstm_out2 = self.dropout_LSTM(lstm_out2)
         bilstm_out2 = self.dropout_BiLSTM(bilstm_out2)
-        allsum = (lstm_out2+bilstm_out2)/2
+        allsum = (lstm_out2+bilstm_out2+fc_out)
         
         out_f = self.tanh(self.fc0(allsum))
         out_f = self.tanh(self.fc1(out_f+fc_out))
@@ -84,14 +96,9 @@ class NNPred(nn.Module):
         in2fc = self.tanh(self.fc0(lstm_out))
         in2fc = self.tanh(self.fc1(in2fc))
         output = self.tanh(self.fc2(in2fc))
+        '''
         return output
     
-    def reset(self):
-        self.hiddenlstm = (torch.zeros(self.num_layers, self.batch_size, self.hidden_size, dtype=torch.double, device=device),torch.zeros(self.num_layers, self.batch_size, self.hidden_size, dtype=torch.double, device=device))
-        self.hiddenbilstm = (torch.zeros(self.num_layers*2, self.batch_size, self.bilstmhidden_size, dtype=torch.double, device=device),torch.zeros(self.num_layers*2, self.batch_size, self.bilstmhidden_size, dtype=torch.double, device=device))
-        self.hiddenlstm2 = (torch.zeros(self.num_layers, self.batch_size, self.hidden_size, dtype=torch.double, device=device),torch.zeros(self.num_layers, self.batch_size, self.hidden_size, dtype=torch.double, device=device))
-        self.hiddenbilstm2 = (torch.zeros(self.num_layers*2, self.batch_size, self.bilstmhidden_size, dtype=torch.double, device=device),torch.zeros(self.num_layers*2, self.batch_size, self.bilstmhidden_size, dtype=torch.double, device=device))
-
 
 def trainIters(encoder, n_iters, print_every=1000, plot_every=2, learning_rate=0.001):
     start = time.time()
@@ -99,27 +106,31 @@ def trainIters(encoder, n_iters, print_every=1000, plot_every=2, learning_rate=0
     print_loss_total = 0  # Reset every print_every
     plot_loss_total = 0  # Reset every plot_every
     
-    encoder_optimizer = optim.Adam(encoder.parameters(), lr=learning_rate)
+    #encoder_optimizer = optim.Adam(encoder.parameters(), lr=learning_rate)
     #criterion = nn.SmoothL1Loss()
-    criterion = nn.MSELoss(reduction='mean')
-    Xsample = []
-    Ysample = []
+    #criterion = nn.MSELoss(reduction='mean')
+    encoder_optimizer = optim.Adam(encoder.parameters(), lr=0.001)
+    criterion = nn.MSELoss(reduction='sum')
+    count = 0
     for iter in range(1, n_iters + 1):
         for local_batch, local_labels in Training_generator:
-            if isinstance(Xsample,(list)):
-                Xsample = local_batch
-                Ysample = local_labels
-            if Xsample.shape != local_batch.shape or Ysample.shape !=local_labels.shape:
+            if local_batch.shape[0]!=32:
+                #print(local_batch.shape[0])
                 continue
+            count = count + 1
             encoder_optimizer.zero_grad()
-            encoder.reset()
-            local_batch = torch.transpose(local_batch, 0, 1).to(device)
-            local_labels =  torch.transpose(local_labels, 0, 1).to(device)
+            local_batch = local_batch.to(device)
+            #local_labels = torch.zeros(local_labels.shape,dtype=torch.double)
+            local_labels = local_labels.to(device)
             predY = encoder(local_batch)
-            loss = criterion(predY,local_labels)
+            loss = criterion(predY,local_labels).to(device)
+            torch.nn.utils.clip_grad_norm_(encoder.parameters(),0.25)
             loss.backward()
             encoder_optimizer.step()
             ls =  loss.detach().item()
+            if count>=50:
+                print('loss = ',ls)
+                count = 0
             print_loss_total += ls
             plot_loss_total += ls
         if iter % print_every == 0:
@@ -131,8 +142,36 @@ def trainIters(encoder, n_iters, print_every=1000, plot_every=2, learning_rate=0
             plot_loss_avg = plot_loss_total / plot_every
             plot_losses.append(plot_loss_avg)
             plot_loss_total = 0
-    showPlot(plot_losses)
+    return plot_losses
 
+def Eval_net(encoder):
+    count = 0
+    for local_batch, local_labels in Training_generator:
+        if local_batch.shape[0]!=32:
+            #print(local_batch.shape[0])
+            continue
+        count = count + 1
+        local_batch = local_batch.to(device)
+        local_labels = local_labels.to(device)
+        predY = encoder(local_batch)
+        print(WholeSet.std.repeat(32,100,1).shape)
+        std = WholeSet.std.repeat(32,100,1)
+        std = std[:,:,2:4].to(device)
+        mn = WholeSet.mn.repeat(32,100,1)
+        mn = mn[:,:,2:4].to(device)
+        rg = WholeSet.range.repeat(32,100,1)
+        rg = rg[:,:,2:4].to(device)
+        predY = (predY*(rg*std)+mn).detach().cpu()
+        pY = np.array(predY )
+        local_labels = (local_labels*(rg*std)+mn).detach().cpu()
+        Y = np.array(local_labels)
+        for i in range(32):
+            plt.figure(i)
+            plt.xlim(0,80)
+            plt.ylim(0,2000)
+            plt.plot(pY[i,:,0],pY[i,:,1],'ro')
+            plt.plot(Y[i,:,0],Y[i,:,1],'go')
+        plt.show()
 
 def asMinutes(s):
     m = math.floor(s / 60)
@@ -147,11 +186,6 @@ def timeSince(since, percent):
     rs = es - s
     return '%s (- %s)' % (asMinutes(s), asMinutes(rs))
 
-import matplotlib.pyplot as plt
-plt.switch_backend('agg')
-import matplotlib.ticker as ticker
-import numpy as np
-
 
 def showPlot(points):
     plt.figure()
@@ -160,17 +194,32 @@ def showPlot(points):
     loc = ticker.MultipleLocator(base=0.2)
     ax.yaxis.set_major_locator(loc)
     plt.plot(points)
+    plt.show()
 
 train_iter = iter(Training_generator)
 x, y = train_iter.next()
+print(x.shape)
+hidden_size = 128
+Prednet = NNPred(x.shape[2], y.shape[2],hidden_size, 32)
 
-hidden_size = 256
-Prednet = NNPred(x.shape[2], y.shape[2], 64)
-Prednet.double()
-Prednet.to(device)
-Prednet.train()
-trainIters(Prednet, 600, print_every=4)
-torch.save(Prednet.state_dict(), 'checkpoint.pth.tar')
+print(device)
+
+TRAN_TAG = True
+if TRAN_TAG:
+    if path.exists("checkpoint.pth.tar"):
+        Prednet.load_state_dict(torch.load('checkpoint.pth.tar'))
+    Prednet = Prednet.double()
+    Prednet = Prednet.to(device)
+    plot_losses = trainIters(Prednet, 100, print_every=4)
+    torch.save(Prednet.state_dict(), 'checkpoint.pth.tar')
+    showPlot(plot_losses)
+else:
+    Prednet.load_state_dict(torch.load('checkpoint.pth.tar'))
+    Prednet = Prednet.double()
+    Prednet = Prednet.to(device)
+    Prednet.eval()
+    Eval_net(Prednet)
+    
 '''
 #save
 torch.save(Prednet.state_dict(), 'checkpoint.pth.tar')

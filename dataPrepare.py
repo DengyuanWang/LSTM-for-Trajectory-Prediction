@@ -41,7 +41,6 @@ class TrajectoryDataset(Dataset):
     def __getitem__(self, idx):
         single_data = self.X_frames[idx]
         single_label = self.Y_frames[idx]
-        #single_label = torch.zeros(single_label.shape).double()
         return (single_data, single_label)
     
     def load_data(self):
@@ -107,24 +106,17 @@ class TrajectoryDataset(Dataset):
                     All_vels = np.vstack((All_vels,vel.reshape(1,-1)))
                     All_vels = np.vstack((All_vels,vely.reshape(1,-1)))
             All_vels = np.transpose(All_vels)
-            total_frame_data = np.concatenate(( All_vels[:,:2], frame, All_vels[:,2:]),axis=1)
-
+            total_frame_data = np.concatenate(( All_vels[:,:2], frame),axis=1)
+            #total_frame_data = np.concatenate(( All_vels[:,:2], frame, All_vels[:,2:]),axis=1)
             # split into several frames each frame have a total length of 100, drop sequence smaller than 130
             if(total_frame_data.shape[0]<130):
                 continue
-            '''
-            plt.figure(2)
-            plt.subplot(1,3,1)
-            plt.plot(total_frame_data[:-29,0],'ro')
-            plt.subplot(1,3,2)
-            plt.plot(total_frame_data[:-29,1],'ro')
-            plt.subplot(1,3,3)
-            plt.plot(total_frame_data[:-29,2],total_frame_data[:-29,3],'ro')
-            plt.show()
-            plt.pause(100)
-            '''
+            
             X = total_frame_data[:-29,:]
-            Y = total_frame_data[29:,:4]
+            Y = total_frame_data[29:,2:4]
+            
+            
+            
             count = 0
             for i in range(X.shape[0]-100):
                 if random.random()>0.2:
@@ -139,14 +131,15 @@ class TrajectoryDataset(Dataset):
     def normalize_data(self):
         A = [list(x) for x in zip(*(self.X_frames))]
         A = torch.tensor(A)
-        print(A.shape)
-        mn = torch.mean(A,dim=0)
-        self.mn = torch.mean(mn,dim=0)
-        print(mn.shape)
-        std = torch.std(A,dim=0)
-        self.std = torch.std(std,dim=0)
-        self.X_frames = [(torch.tensor(item)-self.mn)/self.std for item in self.X_frames]
-        self.Y_frames = [(torch.tensor(item)-self.mn[:4])/self.std[:4] for item in self.Y_frames]
+        A = A.view(-1,A.shape[2])
+        print('A:',A.shape)
+        self.mn = torch.mean(A,dim=0)
+        self.range = torch.max(A,dim=0).values-torch.min(A,dim=0).values
+        self.std = torch.std(A,dim=0)
+        #self.X_frames = [torch.tensor(item) for item in self.X_frames]
+        #self.Y_frames = [torch.tensor(item) for item in self.Y_frames]
+        self.X_frames = [(torch.tensor(item)-self.mn)/(self.std*self.range) for item in self.X_frames]
+        self.Y_frames = [(torch.tensor(item)-self.mn[2:4])/(self.std[2:4]*self.range[2:4]) for item in self.Y_frames]
 
 def get_dataloader():
     '''
@@ -165,8 +158,8 @@ def get_dataloader():
     num_test = (int)(dataset.__len__()*0.9) - num_train
     num_validation = (int)(dataset.__len__()-num_test-num_train)
     train, test, validation = torch.utils.data.random_split(dataset, [num_train, num_test, num_validation])
-    train_loader = DataLoader(train, batch_size=64, shuffle=True)
-    test_loader = DataLoader(test, batch_size=64, shuffle=True)
-    validation_loader = DataLoader(validation, batch_size=64, shuffle=True)
-    return (train_loader, test_loader, validation_loader)
+    train_loader = DataLoader(train, batch_size=32, shuffle=True)
+    test_loader = DataLoader(test, batch_size=32, shuffle=True)
+    validation_loader = DataLoader(validation, batch_size=32, shuffle=True)
+    return (train_loader, test_loader, validation_loader, dataset)
 
