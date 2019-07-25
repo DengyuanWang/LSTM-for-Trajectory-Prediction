@@ -113,7 +113,7 @@ class TrajectoryDataset(Dataset):
                 continue
             
             X = total_frame_data[:-29,:]
-            Y = total_frame_data[29:,2:4]
+            Y = total_frame_data[29:,:4]
             
             
             
@@ -134,12 +134,13 @@ class TrajectoryDataset(Dataset):
         A = A.view(-1,A.shape[2])
         print('A:',A.shape)
         self.mn = torch.mean(A,dim=0)
-        self.range = torch.max(A,dim=0).values-torch.min(A,dim=0).values
+        self.range = (torch.max(A,dim=0).values-torch.min(A,dim=0).values)/2.0
+        #self.range = torch.ones(self.range.shape,dtype = torch.double)
         self.std = torch.std(A,dim=0)
         #self.X_frames = [torch.tensor(item) for item in self.X_frames]
         #self.Y_frames = [torch.tensor(item) for item in self.Y_frames]
         self.X_frames = [(torch.tensor(item)-self.mn)/(self.std*self.range) for item in self.X_frames]
-        self.Y_frames = [(torch.tensor(item)-self.mn[2:4])/(self.std[2:4]*self.range[2:4]) for item in self.Y_frames]
+        self.Y_frames = [(torch.tensor(item)-self.mn[:4])/(self.std[:4]*self.range[:4]) for item in self.Y_frames]
 
 def get_dataloader():
     '''
