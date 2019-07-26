@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 plt.switch_backend('TkAgg')
 import matplotlib.ticker as ticker
 import numpy as np
-
+BatchSize = 128
 class TrajectoryDataset(Dataset):
     """Face Landmarks dataset."""
     
@@ -135,7 +135,7 @@ class TrajectoryDataset(Dataset):
         print('A:',A.shape)
         self.mn = torch.mean(A,dim=0)
         self.range = (torch.max(A,dim=0).values-torch.min(A,dim=0).values)/2.0
-        #self.range = torch.ones(self.range.shape,dtype = torch.double)
+        self.range = torch.ones(self.range.shape,dtype = torch.double)
         self.std = torch.std(A,dim=0)
         #self.X_frames = [torch.tensor(item) for item in self.X_frames]
         #self.Y_frames = [torch.tensor(item) for item in self.Y_frames]
@@ -159,8 +159,8 @@ def get_dataloader():
     num_test = (int)(dataset.__len__()*0.9) - num_train
     num_validation = (int)(dataset.__len__()-num_test-num_train)
     train, test, validation = torch.utils.data.random_split(dataset, [num_train, num_test, num_validation])
-    train_loader = DataLoader(train, batch_size=32, shuffle=True)
-    test_loader = DataLoader(test, batch_size=32, shuffle=True)
-    validation_loader = DataLoader(validation, batch_size=32, shuffle=True)
+    train_loader = DataLoader(train, batch_size=BatchSize, shuffle=True)
+    test_loader = DataLoader(test, batch_size=BatchSize, shuffle=True)
+    validation_loader = DataLoader(validation, batch_size=BatchSize, shuffle=True)
     return (train_loader, test_loader, validation_loader, dataset)
 

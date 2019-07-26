@@ -66,7 +66,7 @@ def trainIters(encoder, n_iters, print_every=1000, plot_every=1, learning_rate=0
     plot_loss_total = 0  # Reset every plot_every
     #criterion = nn.SmoothL1Loss()
     encoder_optimizer = optim.Adam(encoder.parameters(), lr=learning_rate)
-    criterion = nn.MSELoss()
+    criterion = nn.MSELoss(reduction='sum')
     pltcount = 0
     prtcount = 0
     cp = 0
@@ -75,7 +75,7 @@ def trainIters(encoder, n_iters, print_every=1000, plot_every=1, learning_rate=0
             cp = cp+1
             torch.save(encoder.state_dict(), str(cp)+'checkpoint.pth.tar')
         for local_batch, local_labels in Training_generator:
-            if local_batch.shape[0]!=32:
+            if local_batch.shape[0]!=BatchSize:
                 continue
             pltcount = pltcount+1
             prtcount = prtcount+1
@@ -85,7 +85,7 @@ def trainIters(encoder, n_iters, print_every=1000, plot_every=1, learning_rate=0
             local_labels = local_labels.to(device)
             
             predY = encoder(local_batch)
-            loss = criterion(predY[:,-30:,:],local_labels[:,-30:,:]).to(device)
+            loss = criterion(predY[:,-30:,2:4],local_labels[:,-30:,2:4]).to(device)
             loss.backward()
             encoder_optimizer.step()
             
@@ -108,31 +108,55 @@ def trainIters(encoder, n_iters, print_every=1000, plot_every=1, learning_rate=0
 def Eval_net(encoder):
     count = 0
     for local_batch, local_labels in Training_generator:
-        if local_batch.shape[0]!=32:
+        if local_batch.shape[0]!=BatchSize:
             continue
         count = count + 1
         local_batch = local_batch.to(device)
         local_labels = local_labels.to(device)
         predY = encoder(local_batch)
-        print(WholeSet.std.repeat(32,100,1).shape)
-        std = WholeSet.std.repeat(32,100,1)
+        print(WholeSet.std.repeat(BatchSize,100,1).shape)
+        std = WholeSet.std.repeat(BatchSize,100,1)
         std = std[:,:,:4].to(device)
-        mn = WholeSet.mn.repeat(32,100,1)
+        mn = WholeSet.mn.repeat(BatchSize,100,1)
         mn = mn[:,:,:4].to(device)
-        rg = WholeSet.range.repeat(32,100,1)
+        rg = WholeSet.range.repeat(BatchSize,100,1)
         rg = rg[:,:,:4].to(device)
         predY = (predY*(rg*std)+mn).detach().cpu()
         pY = np.array(predY )
+        pY =  scipy.signal.savgol_filter(pY, window_length=5, polyorder=2,axis=1)
         local_labels = (local_labels*(rg*std)+mn).detach().cpu()
         Y = np.array(local_labels)
         pY[:,:-30,:] = Y[:,:-30,:]
-        for i in range(32):
+        rst_xy = calcu_XY(pY,Y)
+        for i in range(10):
             plt.figure(i)
             plt.xlim(0,80)
             plt.ylim(0,2000)
             plt.plot(pY[i,:,2],pY[i,:,3],'r')
             plt.plot(Y[i,:,2],Y[i,:,3],'g')
+            plt.plot(rst_xy[i,:,0],rst_xy[i,:,1],'b')
         plt.show()
+        
+def calcu_XY(predY,labelY):
+    #input: [batchsize len features]; features:[velx,vely,x,y]
+    '''
+    deltaY = v0*delta_t + 0.5* a *delta_t^2
+    a = (v - v0)/delta_t
+    vo
+    '''
+    vels = predY[:,:,0:2]
+    rst_xy = np.zeros(predY[:,:,0:2].shape)
+    rst_xy[:,:-30,:] = predY[:,:-30,2:4]
+    delta_t = 0.1
+    for i in range(30):
+        a = (vels[:,-(30-i),:] - vels[:,-(31-i),:])/delta_t
+        delta_xy = vels[:,-(30-i),:]*vels[:,-(30-i),:]-vels[:,-(31-i),:]*vels[:,-(31-i),:]
+        delta_xy = delta_xy/(2*a)
+        rst_xy[:,-(30-i),:] = rst_xy[:,-(31-i),:] + delta_xy
+        
+    t = rst_xy-predY[:,:,2:4]
+    print(t[1,:,:])
+    return rst_xy
 
 def asMinutes(s):
     m = math.floor(s / 60)
@@ -161,17 +185,17 @@ train_iter = iter(Training_generator)
 x, y = train_iter.next()
 print(x.shape)
 hidden_size = 256
-Prednet = NNPred(x.shape[2], y.shape[2],hidden_size, 32)
+Prednet = NNPred(x.shape[2], y.shape[2],hidden_size, BatchSize)
 
 print(device)
 
-TRAN_TAG = True
+TRAN_TAG = False
 if TRAN_TAG:
     if path.exists("checkpoint.pth.tar"):
         Prednet.load_state_dict(torch.load('checkpoint.pth.tar'))
     Prednet = Prednet.double()
     Prednet = Prednet.to(device)
-    plot_losses = trainIters(Prednet, 200, print_every=2)
+    plot_losses = trainIters(Prednet, 30, print_every=2)
     torch.save(Prednet.state_dict(), 'checkpoint.pth.tar')
     showPlot(plot_losses)
 else:
